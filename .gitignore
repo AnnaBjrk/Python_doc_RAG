@@ -5,3 +5,6 @@ __pycache__/
 /__pycache__
 .env
 *.env
+python_documentation
+/python_documentation
+python_documentation/
