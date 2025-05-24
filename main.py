@@ -19,6 +19,156 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 
+# If WhooshSearch is in python_docs_rag_chunker.py:
+from python_docs_rag_chunker import WhooshSearch
+
+
+def hybrid_search_and_query(vectorstore, whoosh_search, question, llm, chat_history):
+    """
+    Perform hybrid search using both vector and keyword search, then query LLM.
+    """
+    # Get vector search results
+    vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    vector_docs = vector_retriever.get_relevant_documents(question)
+
+    # Get keyword search results
+    whoosh_results = whoosh_search.search(question, limit=5)
+
+    # Format results
+    vector_context = "\n".join([
+        f"Source: {doc.metadata.get('module_name', 'Unknown')} - {doc.metadata.get('section_path', '')}\n"
+        f"Content: {doc.page_content[:300]}...\n"
+        for doc in vector_docs
+    ])
+
+    keyword_context = "\n".join([
+        f"Source: {result['document']} - {result['section_path']}\n"
+        f"Content: {result['content'][:300]}...\n"
+        for result in whoosh_results
+    ])
+
+    # Build chat history context
+    history_context = ""
+    if chat_history:
+        recent_history = chat_history[-2:]  # Last 2 exchanges
+        history_context = "Previous conversation:\n" + "\n".join([
+            f"Q: {q}\nA: {a[:100]}...\n" for q, a in recent_history
+        ])
+
+    # Create comprehensive prompt
+    prompt = f"""You are a Python documentation assistant. Use the following search results to answer the question.
+
+{history_context}
+
+SEMANTIC SEARCH RESULTS (related concepts):
+{vector_context}
+
+KEYWORD SEARCH RESULTS (exact matches):
+{keyword_context}
+
+Question: {question}
+
+IMPORTANT GUIDELINES:
+
+**Grammar Notation Recognition:**
+If the user asks about terms with underscores (like set_display, list_display, function_def), 
+these might be grammar notation from Python's language reference, not functions.
+Look for BNF notation patterns like "term ::= definition" in the search results.
+
+**Python Version Context (Current: 3.13):**
+When interpreting version information:
+- Versions 3.12 and below: Already released, past versions
+- Version 3.13: Current version (what users are assumed to be using)
+- Version 3.14 and above: Future versions, not yet released
+
+For deprecation timelines, always contextualize:
+- "Deprecated since X.Y" - explain how long it's been deprecated
+- "Planned removal in X.Y" - explain how urgent the migration is
+
+**Spelling Error Detection:**
+If your confidence in this answer is below 70% (especially due to not finding relevant information), 
+check if the question contains potential spelling errors for technical terms like:
+- Module names (e.g., "asynchio" → "asyncio")
+- Function names (e.g., "lenght" → "length") 
+- Method names (e.g., "apend" → "append")
+- Keywords (e.g., "yeild" → "yield")
+
+If you suspect spelling errors, suggest the correct spelling and search again mentally.
+
+**Response Instructions:**
+- Use information from both search results - prioritize exact matches for syntax
+- If keyword results show exact syntax, include it
+- If semantic results provide better explanations, use those
+- Mention specific modules/functions when relevant
+- For code examples, preserve exact syntax from the documentation
+- Keep answers concise but complete
+- Always provide practical examples when possible
+
+Answer:"""
+
+    # Query the LLM directly
+    response = llm._call(prompt)
+    return response, vector_docs + [{"source": "keyword", "content": r} for r in whoosh_results]
+
+
+def query_documentation_hybrid(vectorstore, whoosh_search, MODEL, OPENROUTER_API_KEY, OPENROUTER_URL, max_tokens, temperature):
+    """Modified query function using hybrid search."""
+
+    # Initialize LLM
+    llm = OpenRouterLLM(
+        model=MODEL,
+        api_key=OPENROUTER_API_KEY,
+        api_url=OPENROUTER_URL,
+        max_tokens=max_tokens,
+        temperature=temperature
+    )
+
+    chat_history = []
+
+    print("\nWelcome to the Python Documentation Assistant (Hybrid Search)!")
+    print("Ask any question about Python or type 'exit' to quit.\n")
+
+    while True:
+        query = input("\nYour question: ")
+
+        if query.lower() in ["exit", "quit", "q"]:
+            print("\nThank you for using the Python Documentation Assistant!")
+            break
+
+        try:
+            # Use hybrid search
+            answer, sources = hybrid_search_and_query(
+                vectorstore, whoosh_search, query, llm, chat_history
+            )
+
+            print("\nAnswer:")
+            print(answer)
+
+            # Show sources if requested
+            if "sources" in query.lower() or "references" in query.lower():
+                print("\nSources used:")
+                for i, source in enumerate(sources[:5]):  # Show first 5
+                    if isinstance(source, dict) and source.get("source") == "keyword":
+                        print(f"\nKeyword Source {i+1}:")
+                        print(f"- Document: {source['content']['document']}")
+                        print(
+                            f"- Section: {source['content']['section_path']}")
+                    else:
+                        print(f"\nVector Source {i+1}:")
+                        print(
+                            f"- File: {source.metadata.get('file_path', 'Unknown')}")
+                        print(
+                            f"- Section: {source.metadata.get('section_path', '')}")
+
+            # Update chat history
+            chat_history.append((query, answer))
+
+        except Exception as e:
+            print(f"\nError: {str(e)}")
+            print("Please try again with a different question.")
+
+    return chat_history
+
 
 def create_qa_chain(vectorstore, MODEL, OPENROUTER_API_KEY, OPENROUTER_URL, max_tokens, temperature):
     """Create a QA chain using OpenRouter."""
@@ -115,7 +265,7 @@ def main():
     MODEL = os.getenv("MODEL")
     OPENROUTER_URL = os.getenv("OPENROUTER_URL")
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
-    max_tokens: int = 1000
+    max_tokens: int = 3000
     temperature: float = 0.7
 
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
@@ -137,8 +287,11 @@ def main():
 
             # Initialize embedding model
             current_query = PythonDocChunker(docs_dir=docs_dir)
-            # Call the function with parameters
-            vectorstore = current_query.chunk_and_create_vector_database()
+
+            # Create both vector store and Whoosh index
+            vectorstore, whoosh_index = current_query.chunk_and_create_vector_database(
+                create_whoosh=True)
+            print("Both vectorstore and Whoosh index created")
 
             print("Vectorstore created and saved to ./my_vectorstore")
             # Next steps
@@ -154,17 +307,28 @@ def main():
                 continue
 
             else:
-                # Load existing vectorstore
-
                 print("Loading existing vector database...")
                 vectorstore = Chroma(
                     persist_directory="./my_vectorstore",
                     embedding_function=embeddings
                 )
 
-            # Query the documentation
-            chat_history = query_documentation(
-                vectorstore, MODEL, OPENROUTER_API_KEY, OPENROUTER_URL, max_tokens, temperature)
+                # Check if Whoosh index exists and use hybrid search
+                if os.path.exists("./my_whoosh_index"):
+                    whoosh_search = WhooshSearch("./my_whoosh_index")
+                    print("Loaded Whoosh keyword index")
+
+                    # Use HYBRID search
+                    chat_history = query_documentation_hybrid(
+                        vectorstore, whoosh_search, MODEL, OPENROUTER_API_KEY,
+                        OPENROUTER_URL, max_tokens, temperature
+                    )
+                else:
+                    print("No Whoosh index found. Using vector search only...")
+                    # Fall back to original method
+                    chat_history = query_documentation(
+                        vectorstore, MODEL, OPENROUTER_API_KEY, OPENROUTER_URL, max_tokens, temperature
+                    )
 
             # Save the chat history to a file
             current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

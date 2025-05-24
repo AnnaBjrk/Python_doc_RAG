@@ -16,3 +16,10 @@ my_vectorstore
 /my_vectorstore
 /my_vectorstore/
 my_vectorstore/
+rag-chunker-info.txt
+arkiv
+arkiv/
+my_whoosh_index
+/my_whoosh_index
+/my_whoosh_index/
+my_whoosh_index/
