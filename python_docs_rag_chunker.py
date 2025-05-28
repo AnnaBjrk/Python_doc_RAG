@@ -22,10 +22,10 @@ chunking logic:
 import os
 import re
 import glob
-from typing import List, Dict, Tuple, Any, Optional, Set
-import json
+from typing import List, Dict, Tuple, Any, Optional
+# import json
 from dataclasses import dataclass, field, asdict
-import math
+# import math
 from pathlib import Path
 
 # import for whoosh - trad search engine
@@ -36,16 +36,11 @@ from whoosh.qparser import QueryParser
 
 
 # LangChain imports
-# from langchain.text_splitter import RecursiveCharacterTextSplitter
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-# from langchain.docstore.document import Document
-from langchain_core.documents import Document
-# from langchain.vectorstores import Chroma
+# from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
-# funkar bra med Llama
-# from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
-# from langchain.schema import Document as LangChainDocument
 from langchain_core.documents import Document as LangChainDocument
 
 
@@ -210,17 +205,6 @@ class PythonDocChunker:
         title_match = re.search(r'^(.*?)\n[=*]+', content)
         return title_match.group(1) if title_match else ""
 
-    # def _identify_content_type(self, content: str, file_path: str) -> str:
-    #     """Identify the type of content in the chunk. Will be used to determine chunk size."""
-    #     if "class " in content or "def " in content or re.search(r':[a-zA-Z]+:', content):
-    #         return "api_reference"
-    #     elif "example" in content.lower() or ">>>" in content:
-    #         return "example"
-    #     elif file_path.startswith("tutorial") or file_path.startswith("howto"):
-    #         return "tutorial"
-    #     else:
-    #         return "explanation"
-
     def _contains_table(self, content: str) -> bool:
         """Check if the content contains a table."""
         return bool(self.table_pattern.search(content))
@@ -363,18 +347,6 @@ class PythonDocChunker:
 
         # If we still have content after removing special structures, chunk it
         if content.strip():
-            # # Determine optimal chunk size based on content
-            # content_type = self._identify_content_type(
-            #     content, base_metadata.file_path)
-            # base_metadata.content_type = content_type
-
-            # # Adjust chunk size based on content type, vi gör inte detta nu. Svårt att hitta
-            # lämpliga contenttypes.
-            # chunk_size = self.chunk_max_size
-            # if content_type == "api_reference":
-            #     chunk_size = self.chunk_max_size * 1.5  # Larger chunks for API references
-            # elif content_type == "example":
-            #     chunk_size = self.chunk_max_size * 2  # Even larger for examples
 
             # Use LangChain's text splitter for the remaining content
             text_splitter = RecursiveCharacterTextSplitter(
@@ -629,15 +601,20 @@ class PythonDocChunker:
         vectorstore = self.build_vectorstore(documents, self.output_dir)
 
         # Build Whoosh index if requested
+        whoosh_search = None
         if create_whoosh:
-            print("Building Whoosh keyword index...")
-            whoosh_index = self.build_whoosh_index(documents)
-        print("Done!")
-        return vectorstore, whoosh_index
+            try:
+                print("Building Whoosh keyword index...")
+                self.build_whoosh_index(documents)  # Creates the index files
+                whoosh_search = WhooshSearch(
+                    "./my_whoosh_index")  # Wraps it properly
+                print("Whoosh index created successfully")
+            except Exception as e:
+                print(f"Warning: Failed to create Whoosh index: {e}")
+                print("Continuing with vector search only...")
 
         print("Done!")
-
-        return vectorstore
+        return vectorstore, whoosh_search
 
     def _create_whoosh_schema(self):
         """Create Whoosh schema for keyword search."""

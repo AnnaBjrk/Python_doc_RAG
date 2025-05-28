@@ -7,13 +7,11 @@
 # import HuggingFaceEmbeddings``.
 
 
-# from langchain.chains import ConversationalRetrievalChain
 from langchain.chains.conversational_retrieval.base import ConversationalRetrievalChain
-# from langchain_community.embeddings import HuggingFaceEmbeddings
+
 from langchain_huggingface import HuggingFaceEmbeddings
-from python_docs_rag_chunker import PythonDocChunker, DocMetadata
+from python_docs_rag_chunker import PythonDocChunker
 from openrouter_rag_chain import OpenRouterLLM
-# from langchain_community.vectorstores import Chroma
 from langchain_chroma import Chroma
 import os
 from dotenv import load_dotenv
@@ -29,7 +27,7 @@ def hybrid_search_and_query(vectorstore, whoosh_search, question, llm, chat_hist
     """
     # Get vector search results
     vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-    vector_docs = vector_retriever.get_relevant_documents(question)
+    vector_docs = vector_retriever.invoke(question)
 
     # Get keyword search results
     whoosh_results = whoosh_search.search(question, limit=5)
@@ -114,6 +112,9 @@ Answer:"""
 def query_documentation_hybrid(vectorstore, whoosh_search, MODEL, OPENROUTER_API_KEY, OPENROUTER_URL, max_tokens, temperature):
     """Modified query function using hybrid search."""
 
+    # sätts till true om man vill debugga och se vilka källor som används
+    show_sources = False
+
     # Initialize LLM
     llm = OpenRouterLLM(
         model=MODEL,
@@ -125,11 +126,13 @@ def query_documentation_hybrid(vectorstore, whoosh_search, MODEL, OPENROUTER_API
 
     chat_history = []
 
-    print("\nWelcome to the Python Documentation Assistant (Hybrid Search)!")
+    print(
+        "\n\033[1;93mWelcome to the Python Documentation Assistant (Hybrid Search)!\033[0m")
     print("Ask any question about Python or type 'exit' to quit.\n")
 
     while True:
-        query = input("\nYour question: ")
+        print("\n...just type EXIT to quit the program.")
+        query = input(f"\n\033[1;93mNew Question: \033[0m")
 
         if query.lower() in ["exit", "quit", "q"]:
             print("\nThank you for using the Python Documentation Assistant!")
@@ -141,24 +144,26 @@ def query_documentation_hybrid(vectorstore, whoosh_search, MODEL, OPENROUTER_API
                 vectorstore, whoosh_search, query, llm, chat_history
             )
 
-            print("\nAnswer:")
+            print(f"\n\033[1;93mAnswer: \033[0m\n")
             print(answer)
 
             # Show sources if requested
-            if "sources" in query.lower() or "references" in query.lower():
-                print("\nSources used:")
-                for i, source in enumerate(sources[:5]):  # Show first 5
-                    if isinstance(source, dict) and source.get("source") == "keyword":
-                        print(f"\nKeyword Source {i+1}:")
-                        print(f"- Document: {source['content']['document']}")
-                        print(
-                            f"- Section: {source['content']['section_path']}")
-                    else:
-                        print(f"\nVector Source {i+1}:")
-                        print(
-                            f"- File: {source.metadata.get('file_path', 'Unknown')}")
-                        print(
-                            f"- Section: {source.metadata.get('section_path', '')}")
+            if show_sources:
+                if "sources" in query.lower() or "references" in query.lower():
+                    print("\nSources used:")
+                    for i, source in enumerate(sources[:5]):  # Show first 5
+                        if isinstance(source, dict) and source.get("source") == "keyword":
+                            print(f"\nKeyword Source {i+1}:")
+                            print(
+                                f"- Document: {source['content']['document']}")
+                            print(
+                                f"- Section: {source['content']['section_path']}")
+                        else:
+                            print(f"\nVector Source {i+1}:")
+                            print(
+                                f"- File: {source.metadata.get('file_path', 'Unknown')}")
+                            print(
+                                f"- Section: {source.metadata.get('section_path', '')}")
 
             # Update chat history
             chat_history.append((query, answer))
@@ -271,17 +276,18 @@ def main():
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     docs_dir = "./python_documentation/python-3.13-docs-text"
     print("\n*******************************************\n")
-    print("Wellcome to the Python documetation RAG system")
+    print("\033[1;93mWellcome to the Python documetation RAG system\033[0m")
     print("\n*******************************************\n")
     print("This system is designed to help you find information in the Python documentation.")
 
     running = True
     while running == True:
         print("\n* Would you like to create a new vectorstore or load an existing one? ")
-        print("- type NEW and press enter/\n")
+        print("- type \033[1;93mNEW and press enter/\033[0m\n")
         print(
-            "* If you want to start a query with an existing vectorstore \n- just press enter\n")
-        print("* If you want to quit \n- type EXIT and press enter\n")
+            "* If you want to start a query with an existing vectorstore \n- just \033[1;93mpress enter\033[0m\n")
+        print(
+            "* If you want to quit \n- type \033[1;93mEXIT and press enter\033[0m\n")
         choice = input("Please enter your choice: ")
         if choice.lower() == "new":
 
@@ -289,7 +295,7 @@ def main():
             current_query = PythonDocChunker(docs_dir=docs_dir)
 
             # Create both vector store and Whoosh index
-            vectorstore, whoosh_index = current_query.chunk_and_create_vector_database(
+            vectorstore, whoosh_search = current_query.chunk_and_create_vector_database(
                 create_whoosh=True)
             print("Both vectorstore and Whoosh index created")
 
@@ -297,6 +303,13 @@ def main():
             # Next steps
             print(
                 "You can now use the vectorstore to search for information in the Python documentation.\n")
+
+            # Start querying immediately after creation
+            if whoosh_search:
+                chat_history = query_documentation_hybrid(
+                    vectorstore, whoosh_search, MODEL, OPENROUTER_API_KEY,
+                    OPENROUTER_URL, max_tokens, temperature
+                )
 
         elif choice.lower() == "exit":
             print("Exiting the program.")

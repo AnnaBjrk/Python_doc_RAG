@@ -1,14 +1,6 @@
-import os
 import json
 import requests
-
-# from langchain.chains import ConversationalRetrievalChain
-from langchain.chains.conversational_retrieval.base import ConversationalRetrievalChain
-# from langchain.schema import HumanMessage, AIMessage
-from langchain_core.messages import HumanMessage, AIMessage
-# from langchain.llms.base import LLM
 from langchain_core.language_models import LLM
-# from langchain.callbacks.manager import CallbackManagerForLLMRun
 from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 from typing import Any, List, Mapping, Optional
 
@@ -49,13 +41,6 @@ class OpenRouterLLM(LLM):
             "stream": False
         }
 
-        # # If stop sequences are provided, add them
-        # ev lägger vi till detta senare, stödjs inte av Llamacode och
-        # llama scout, vill man ha det får man utveckla logik själv
-
-        # if stop:
-        #     data["stop"] = stop
-
         # Make the request
         response = requests.post(
             url=self.api_url,
@@ -66,7 +51,7 @@ class OpenRouterLLM(LLM):
         # Check if the request was successful
         if response.status_code == 200:
             response_json = response.json()
-            print(f"Response from Model {response_json}")
+            # print(f"Response from Model {response_json}") # används för debugging
             return response_json["choices"][0]["message"]["content"]
         else:
             raise RuntimeError(
